@@ -14,14 +14,16 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 # 2. Fetch and Cache Data (TTL caches data for 10 minutes to avoid hitting API limits)
 @st.cache_data(ttl=600)
 def load_data():
-    # Load Data Source 1: AppScript Data
-    df_info = conn.read(worksheet="DATA") # Replace with your actual tab name
+    # Store your specific Google Sheet URL in a variable
+    sheet_url = "https://docs.google.com/spreadsheets/d/1t1ZnGoLpqcF7OnkVXsp6I4yF-6le3-ai4BYKukaJka4"
     
-    # Load Data Source 2: Pasted Data
-    df_stock = conn.read(worksheet="Inventory") # Replace with your actual tab name
+    # Load Data Source 1: AppScript Data (Pass the URL here)
+    df_info = conn.read(spreadsheet=sheet_url, worksheet="DATA") # Replace with actual tab name
+    
+    # Load Data Source 2: Pasted Data (Pass the URL here too)
+    df_stock = conn.read(spreadsheet=sheet_url, worksheet="Inventory") # Replace with actual tab name
     
     # Merge the two datasets on a common column, e.g., 'SKU'
-    # Ensure 'SKU' is a string in both to avoid merge errors
     df_info['SKU'] = df_info['SKU'].astype(str)
     df_stock['SKU'] = df_stock['SKU'].astype(str)
     
@@ -33,9 +35,6 @@ def load_data():
     df_merged['Sold'] = df_merged['Sold'].fillna(0)
     
     return df_merged
-
-# Load the data
-df = load_data()
 
 # 3. Create a Sidebar for Granular Drill-Downs
 st.sidebar.header("Filter Data")
