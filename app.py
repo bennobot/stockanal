@@ -15,10 +15,10 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 @st.cache_data(ttl=600)
 def load_data():
     # Load Data Source 1: AppScript Data
-    df_info = conn.read(worksheet="InventoryInfo") # Replace with your actual tab name
+    df_info = conn.read(worksheet="DATA") # Replace with your actual tab name
     
     # Load Data Source 2: Pasted Data
-    df_stock = conn.read(worksheet="StockInfo") # Replace with your actual tab name
+    df_stock = conn.read(worksheet="Inventory") # Replace with your actual tab name
     
     # Merge the two datasets on a common column, e.g., 'SKU'
     # Ensure 'SKU' is a string in both to avoid merge errors
