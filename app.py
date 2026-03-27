@@ -48,7 +48,7 @@ def load_data():
     ]
     
     # Trick to avoid crashes if a column name has a slight typo in the sheet
-    existing_columns =[col for col in core_columns if col in df.columns]
+    existing_columns = [col for col in core_columns if col in df.columns]
     df = df[existing_columns]
             
     return df
@@ -103,7 +103,7 @@ col_chart1, col_chart2 = st.columns(2)
 
 with col_chart1:
     st.subheader("Stock Status by Brand")
-    if 'Brand' in filtered_df.columns:
+    if 'Brand' in filtered_df.columns and not filtered_df.empty:
         # Group by Brand
         brand_df = filtered_df.groupby("Brand")[['Available', 'Committed']].sum().reset_index()
         # Plotly stacked bar chart
@@ -113,8 +113,28 @@ with col_chart1:
 
 with col_chart2:
     st.subheader("Top 10 Committed SKUs")
-    if 'SKU' in filtered_df.columns and 'Committed' in filtered_df.columns:
+    if 'SKU' in filtered_df.columns and 'Committed' in filtered_df.columns and not filtered_df.empty:
         # Sort by Committed 
         top_committed = filtered_df.sort_values(by="Committed", ascending=False).head(10)
+        
         # Add Product Name to hover data if it exists
-        hover_data = ["Product Name"] if "Product Name" in filtered_df.columns else
+        hover_data =["Product Name"] if "Product Name" in filtered_df.columns else None
+        
+        fig_sku = px.bar(top_committed, x="SKU", y="Committed", hover_data=hover_data,
+                         title="Highest Committed Products", text_auto=True)
+        st.plotly_chart(fig_sku, use_container_width=True)
+
+# 6. Granular Data Table
+st.subheader("Granular Inventory Data")
+st.write("Use the table below to sort and search through specific items.")
+
+st.dataframe(
+    filtered_df, 
+    use_container_width=True,
+    hide_index=True
+)
+
+# Optional: Add a button to manually clear the cache and pull fresh Google Sheets data
+if st.button("Refresh Data"):
+    st.cache_data.clear()
+    st.rerun()
