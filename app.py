@@ -38,6 +38,13 @@ def load_data():
             df['Sales Price (Price Tier 1)'].astype(str).str.replace(r'[£$,]', '', regex=True), 
             errors='coerce'
         )
+        
+    # Clean up the ABV column (removes any % symbols and forces it to a number)
+    if 'ABV' in df.columns:
+        df['ABV'] = pd.to_numeric(
+            df['ABV'].astype(str).str.replace(r'[%]', '', regex=True), 
+            errors='coerce'
+        )
             
     # Calculate Totals across both depots for easy filtering and charting
     df['Total OH'] = df.get('LDN OH', 0) + df.get('GLO OH', 0)
@@ -171,6 +178,10 @@ for col in inventory_cols:
 # Make the Price column 2 decimal places
 if 'Sales Price (Price Tier 1)' in filtered_df.columns:
     format_dict['Sales Price (Price Tier 1)'] = "{:,.2f}"
+    
+# Make the ABV column 1 decimal place
+if 'ABV' in filtered_df.columns:
+    format_dict['ABV'] = "{:.1f}"
 
 # Apply the styling AND the formatting to the dataframe
 styled_df = filtered_df.style.apply(style_depot_columns, axis=0).format(format_dict, na_rep="")
