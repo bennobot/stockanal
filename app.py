@@ -33,7 +33,6 @@ def load_data():
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
     # Calculate Totals across both depots for easy filtering and charting
-    # Using df.get() safely returns 0 if a column happens to be missing
     df['Total OH'] = df.get('LDN OH', 0) + df.get('GLO OH', 0)
     df['Total Avail'] = df.get('LDN Avail', 0) + df.get('GLO Avail', 0)
     df['Total Sold'] = df.get('LDN Sold', 0) + df.get('GLO Sold', 0)
@@ -59,11 +58,9 @@ def load_data():
     ]
     
     # Trick to avoid crashes if a column name is slightly off
-    # Note: Google Sheets has 'Product Name' twice in your header list, pandas will naturally 
-    # pick the first one which is exactly what we want.
-    existing_columns =[col for col in core_columns if col in df.columns]
+    existing_columns = [col for col in core_columns if col in df.columns]
     
-    # Remove any duplicate columns that pandas might have renamed (like 'Product Name.1')
+    # Remove any duplicate columns that pandas might have renamed
     df = df.loc[:, ~df.columns.duplicated()]
     
     df = df[existing_columns]
@@ -136,12 +133,28 @@ with col_chart2:
                          title="Highest Sold Products (Combined)", text_auto=True)
         st.plotly_chart(fig_sku, use_container_width=True)
 
-# 6. Granular Data Table
+# 6. Granular Data Table with Color Formatting
 st.subheader("Granular Inventory Data")
 st.write("Use the table below to sort and search through specific items.")
 
+# Define the color mapping function
+def style_depot_columns(col):
+    # Using rgba ensures the text remains readable in both Light & Dark modes
+    if 'LDN' in col.name:
+        return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) # Light Blue
+    elif 'GLO' in col.name:
+        return['background-color: rgba(0, 200, 100, 0.15)'] * len(col) # Light Green
+    elif 'Total' in col.name:
+        return['background-color: rgba(255, 165, 0, 0.15)'] * len(col) # Light Orange
+    else:
+        return [''] * len(col)
+
+# Apply the styling to the dataframe
+styled_df = filtered_df.style.apply(style_depot_columns, axis=0)
+
+# Display the styled dataframe
 st.dataframe(
-    filtered_df, 
+    styled_df, 
     use_container_width=True,
     hide_index=True
 )
