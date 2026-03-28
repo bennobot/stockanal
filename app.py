@@ -32,6 +32,13 @@ def load_data():
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
+    # Clean up the Price column (removes any currency symbols/commas and forces it to a number)
+    if 'Sales Price (Price Tier 1)' in df.columns:
+        df['Sales Price (Price Tier 1)'] = pd.to_numeric(
+            df['Sales Price (Price Tier 1)'].astype(str).str.replace(r'[£$,]', '', regex=True), 
+            errors='coerce'
+        )
+            
     # Calculate Totals across both depots for easy filtering and charting
     df['Total OH'] = df.get('LDN OH', 0) + df.get('GLO OH', 0)
     df['Total Avail'] = df.get('LDN Avail', 0) + df.get('GLO Avail', 0)
@@ -58,7 +65,7 @@ def load_data():
     ]
     
     # Trick to avoid crashes if a column name is slightly off
-    existing_columns = [col for col in core_columns if col in df.columns]
+    existing_columns =[col for col in core_columns if col in df.columns]
     
     # Remove any duplicate columns that pandas might have renamed
     df = df.loc[:, ~df.columns.duplicated()]
@@ -133,24 +140,40 @@ with col_chart2:
                          title="Highest Sold Products (Combined)", text_auto=True)
         st.plotly_chart(fig_sku, use_container_width=True)
 
-# 6. Granular Data Table with Color Formatting
+# 6. Granular Data Table with Color & Number Formatting
 st.subheader("Granular Inventory Data")
 st.write("Use the table below to sort and search through specific items.")
 
 # Define the color mapping function
 def style_depot_columns(col):
-    # Using rgba ensures the text remains readable in both Light & Dark modes
     if 'LDN' in col.name:
-        return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) # Light Blue
+        return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) 
     elif 'GLO' in col.name:
-        return['background-color: rgba(0, 200, 100, 0.15)'] * len(col) # Light Green
+        return['background-color: rgba(0, 200, 100, 0.15)'] * len(col) 
     elif 'Total' in col.name:
-        return['background-color: rgba(255, 165, 0, 0.15)'] * len(col) # Light Orange
+        return['background-color: rgba(255, 165, 0, 0.15)'] * len(col) 
     else:
         return [''] * len(col)
 
-# Apply the styling to the dataframe
-styled_df = filtered_df.style.apply(style_depot_columns, axis=0)
+# Set up specific number formatting rules
+format_dict = {}
+
+# Make inventory columns integers (with thousands separators)
+inventory_cols =[
+    'LDN Sold', 'LDN Avail', 'LDN OH', 
+    'GLO Sold', 'GLO Avail', 'GLO OH', 
+    'Total OH', 'Total Avail', 'Total Sold'
+]
+for col in inventory_cols:
+    if col in filtered_df.columns:
+        format_dict[col] = "{:,.0f}"
+
+# Make the Price column 2 decimal places
+if 'Sales Price (Price Tier 1)' in filtered_df.columns:
+    format_dict['Sales Price (Price Tier 1)'] = "{:,.2f}"
+
+# Apply the styling AND the formatting to the dataframe
+styled_df = filtered_df.style.apply(style_depot_columns, axis=0).format(format_dict, na_rep="")
 
 # Display the styled dataframe
 st.dataframe(
