@@ -114,21 +114,9 @@ def apply_location_toggles(data, ldn_active, glo_active):
 # Helper Function 2: Render Styled Data Table
 # ---------------------------------------------------------
 def render_inventory_table(data):
-    # 1. Define the exact desired column order
-    target_order =[
-        'Group by SKU', 'Availability', 'Group', 'Parent Style', 'Brand', 
-        'Product Name', 'Format Type', 'Size', 'ABV', 'Price', 
-        'LDN OH', 'LDN Avail', 'LDN Sold', 
-        'GLO OH', 'GLO Avail', 'GLO Sold', 
-        'Total OH', 'Total Avail', 'Total Sold'
-    ]
-    
-    # 2. Rearrange existing columns safely, hiding 'Format' and 'Default Location' inherently
-    display_cols =[c for c in target_order if c in data.columns]
-    
-    # 3. Add any unexpected extra columns at the end so data is never lost
-    extra_cols =[c for c in data.columns if c not in display_cols and c not in ['Format', 'Default Location']]
-    display_df = data[display_cols + extra_cols]
+    # DROP columns we don't want to show on screen to save horizontal space
+    cols_to_hide = ['Format', 'Default Location']
+    display_df = data.drop(columns=[c for c in cols_to_hide if c in data.columns])
 
     def style_depot_columns(col):
         if 'LDN' in col.name: return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) 
@@ -138,33 +126,27 @@ def render_inventory_table(data):
 
     format_dict = {}
     inventory_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH', 'Total OH', 'Total Avail', 'Total Sold']
-    
-    # Identify which inventory columns exist right now to format and center them
-    active_inv_cols = [col for col in inventory_cols if col in display_df.columns]
-    
-    for col in active_inv_cols: 
-        format_dict[col] = "{:,.0f}"
+    for col in inventory_cols:
+        if col in display_df.columns: format_dict[col] = "{:,.0f}"
 
     if 'Price' in display_df.columns: format_dict['Price'] = "{:,.2f}"
     if 'ABV' in display_df.columns: format_dict['ABV'] = "{:.1f}"
 
-    # Apply colors, reduce font size, and CENTER the inventory column numbers
+    # Apply colors and reduce the font size of the table specifically to 12px
     styled_df = (display_df.style
                  .apply(style_depot_columns, axis=0)
                  .set_properties(**{'font-size': '12px'})
-                 .set_properties(subset=active_inv_cols, **{'text-align': 'center'})
                  .format(format_dict, na_rep=""))
     
-    # Render table (Note: width="stretch" fixes the Streamlit console warning)
+    # st.dataframe with column_config to squeeze the SKU column
     st.dataframe(
         styled_df, 
-        width="stretch", 
+        use_container_width=True, 
         hide_index=True,
         column_config={
             "Group by SKU": st.column_config.TextColumn(
                 "SKU",
-                width="small",  # Force narrow column
-                max_chars=15,   # Visually cuts it in half to save massive space
+                width="small",  # Forces it to be narrow
                 help="Double click cell to copy SKU"
             )
         }
@@ -201,8 +183,7 @@ with tab_dash:
             format_agg = dash_df.groupby("Format")[['Total Avail', 'Total Sold']].sum().reset_index()
             fig_format = px.bar(format_agg, x="Format", y=["Total Avail", "Total Sold"], 
                              barmode="group", labels={'value': 'Volume', 'variable': 'Metric'})
-            # Streamlit fix: replaced use_container_width with width="stretch"
-            st.plotly_chart(fig_format, width="stretch")
+            st.plotly_chart(fig_format, use_container_width=True)
             
     with chart_col2:
         st.write("**Available Stock: Style within Formats**")
@@ -212,8 +193,7 @@ with tab_dash:
                 sun_df['Format'] = sun_df['Format'].fillna('Unknown Format').replace('', 'Unknown Format')
                 sun_df['Parent Style'] = sun_df['Parent Style'].fillna('Unknown Style').replace('', 'Unknown Style')
                 fig_sun = px.sunburst(sun_df, path=['Format', 'Parent Style'], values='Total Avail')
-                # Streamlit fix: replaced use_container_width with width="stretch"
-                st.plotly_chart(fig_sun, width="stretch")
+                st.plotly_chart(fig_sun, use_container_width=True)
             else:
                 st.info("No available stock to display for selected locations.")
 
