@@ -74,7 +74,7 @@ def render_inventory_table(data):
         elif 'Total' in col.name:
             return['background-color: rgba(255, 165, 0, 0.15)'] * len(col) 
         else:
-            return [''] * len(col)
+            return[''] * len(col)
 
     format_dict = {}
     inventory_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH', 'Total OH', 'Total Avail', 'Total Sold']
@@ -96,6 +96,7 @@ def render_inventory_table(data):
 # ---------------------------------------------------------
 # UI Layout: Tabs
 # ---------------------------------------------------------
+# Define the tabs structure
 tab_dash, tab_supplier, tab_format, tab_style = st.tabs([
     "📊 Dashboard", 
     "🏭 Brand / Supplier", 
@@ -144,9 +145,16 @@ with tab_dash:
     with chart_col2:
         st.write("**Available Stock: Style within Formats**")
         if 'Format' in dash_df.columns and 'Parent Style' in dash_df.columns and not dash_df.empty:
-            # Sunburst chart is perfect for hierarchical data (Format -> Style)
-            sun_df = dash_df[dash_df['Dash Avail'] > 0] # Only plot things we actually have
+            
+            # Create a clean copy just for the sunburst chart
+            sun_df = dash_df[dash_df['Dash Avail'] > 0].copy()
+            
             if not sun_df.empty:
+                # FIX: Fill missing values with 'Unknown' to prevent Plotly ValueErrors
+                sun_df['Format'] = sun_df['Format'].fillna('Unknown Format').replace('', 'Unknown Format')
+                sun_df['Parent Style'] = sun_df['Parent Style'].fillna('Unknown Style').replace('', 'Unknown Style')
+                
+                # Plot the sunburst
                 fig_sun = px.sunburst(sun_df, path=['Format', 'Parent Style'], values='Dash Avail')
                 st.plotly_chart(fig_sun, use_container_width=True)
             else:
@@ -179,7 +187,7 @@ with tab_format:
         st.error("Format column not found in data.")
 
 
-# --- TAB 4: PARENT STYLE ---
+# --- TAB 4: PARENT Style ---
 with tab_style:
     st.subheader("Inventory by Parent Style")
     if 'Parent Style' in df.columns:
