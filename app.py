@@ -9,7 +9,7 @@ st.set_page_config(page_title="Inventory Dashboard", layout="wide")
 # Inject custom CSS to reduce the global font size and make the app tighter
 st.markdown("""
     <style>
-        html, body,[class*="css"] {
+        html, body, [class*="css"] {
             font-size: 14px; 
         }
     </style>
@@ -53,7 +53,7 @@ def load_data():
     if 'Default Location' in df.columns:
         df = df[df['Default Location'].fillna('').str.lower() != 'service']
         
-    # Select our specific required columns (using Price instead of the old name)
+    # Select our specific required columns
     core_columns =[
         'Group by SKU', 'Brand', 'Product Name', 'Group', 'Parent Style', 
         'Format Type', 'Format', 'Size', 'ABV', 'Price', 
@@ -67,20 +67,15 @@ def load_data():
     
     # --- CUSTOM DEFAULT SORTING ---
     if 'Format' in df.columns:
-        # Define the explicit order for Formats
         format_order =['Cask', 'Keg', 'Cans', 'Bottles', 'Bag in Box', 'Other']
         existing_formats = df['Format'].dropna().unique().tolist()
         final_format_order = format_order +[f for f in existing_formats if f not in format_order]
-        
-        # Apply categorical sorting for the Format column
         df['Format'] = pd.Categorical(df['Format'], categories=final_format_order, ordered=True)
         
-    # Sort the dataframe: Brand -> Format (custom order) -> Product Name
-    sort_cols = [c for c in ['Brand', 'Format', 'Product Name'] if c in df.columns]
+    sort_cols =[c for c in ['Brand', 'Format', 'Product Name'] if c in df.columns]
     if sort_cols:
         df = df.sort_values(by=sort_cols, ascending=[True] * len(sort_cols))
         
-    # Convert Format back to a string so filters work cleanly
     if 'Format' in df.columns:
         df['Format'] = df['Format'].astype(str).replace('nan', '')
             
@@ -99,10 +94,8 @@ def apply_location_toggles(data, ldn_active, glo_active):
     df_loc['Total Avail'] = (df_loc.get('LDN Avail', 0) if ldn_active else 0) + (df_loc.get('GLO Avail', 0) if glo_active else 0)
     df_loc['Total Sold'] = (df_loc.get('LDN Sold', 0) if ldn_active else 0) + (df_loc.get('GLO Sold', 0) if glo_active else 0)
     
-    # Filter out items where the active locations have exactly 0 stock
     df_loc = df_loc[df_loc['Total OH'] > 0]
     
-    # Drop columns for inactive locations
     cols_to_drop =[]
     if not ldn_active: cols_to_drop.extend(['LDN OH', 'LDN Avail', 'LDN Sold'])
     if not glo_active: cols_to_drop.extend(['GLO OH', 'GLO Avail', 'GLO Sold'])
@@ -114,9 +107,19 @@ def apply_location_toggles(data, ldn_active, glo_active):
 # Helper Function 2: Render Styled Data Table
 # ---------------------------------------------------------
 def render_inventory_table(data):
-    # DROP columns we don't want to show on screen to save horizontal space
-    cols_to_hide = ['Format', 'Default Location']
-    display_df = data.drop(columns=[c for c in cols_to_hide if c in data.columns])
+    # 1. Define the exact requested column order
+    target_order =[
+        'Group by SKU', 'Availability', 'Group', 'Parent Style', 'Brand', 
+        'Product Name', 'Format Type', 'Size', 'ABV', 'Price', 
+        'LDN OH', 'LDN Avail', 'LDN Sold', 
+        'GLO OH', 'GLO Avail', 'GLO Sold', 
+        'Total OH', 'Total Avail', 'Total Sold'
+    ]
+    
+    # Filter the data to ONLY show these columns (in this exact order), 
+    # automatically hiding any columns that were toggled off (like LDN or GLO)
+    ordered_cols = [col for col in target_order if col in data.columns]
+    display_df = data[ordered_cols]
 
     def style_depot_columns(col):
         if 'LDN' in col.name: return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) 
@@ -126,19 +129,23 @@ def render_inventory_table(data):
 
     format_dict = {}
     inventory_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH', 'Total OH', 'Total Avail', 'Total Sold']
-    for col in inventory_cols:
-        if col in display_df.columns: format_dict[col] = "{:,.0f}"
+    
+    # Identify which inventory columns are currently active to format and center them
+    active_inv_cols = [col for col in inventory_cols if col in display_df.columns]
+    
+    for col in active_inv_cols: 
+        format_dict[col] = "{:,.0f}"
 
     if 'Price' in display_df.columns: format_dict['Price'] = "{:,.2f}"
     if 'ABV' in display_df.columns: format_dict['ABV'] = "{:.1f}"
 
-    # Apply colors and reduce the font size of the table specifically to 12px
+    # Apply all visual styles: Colors, Size 12 Font, and Centered text for inventory levels
     styled_df = (display_df.style
                  .apply(style_depot_columns, axis=0)
                  .set_properties(**{'font-size': '12px'})
+                 .set_properties(subset=active_inv_cols, **{'text-align': 'center'})
                  .format(format_dict, na_rep=""))
     
-    # st.dataframe with column_config to squeeze the SKU column
     st.dataframe(
         styled_df, 
         use_container_width=True, 
@@ -146,8 +153,8 @@ def render_inventory_table(data):
         column_config={
             "Group by SKU": st.column_config.TextColumn(
                 "SKU",
-                width="small",  # Forces it to be narrow
-                help="Double click cell to copy SKU"
+                width=45,  # Numeric pixel limit forces the column to be incredibly narrow!
+                help="Double click cell to copy full SKU"
             )
         }
     )
@@ -207,7 +214,6 @@ with tab_data:
     with col_l1: data_ldn = st.checkbox("Include LDN (London)", value=True, key="data_ldn")
     with col_l2: data_glo = st.checkbox("Include GLO (Gloucester)", value=True, key="data_glo")
     
-    # Apply toggles
     tab_df = apply_location_toggles(df, data_ldn, data_glo)
     
     if tab_df.empty:
@@ -216,28 +222,24 @@ with tab_data:
         st.write("**2. Drill Down Data**")
         col1, col2, col3, col4 = st.columns(4)
         
-        # Brand Filter
         with col1:
             if 'Brand' in tab_df.columns:
                 options_brand = sorted([str(x) for x in tab_df['Brand'].unique() if pd.notna(x) and str(x).strip() != ''])
                 sel_brand = st.multiselect("Supplier / Brand", options=options_brand)
                 if sel_brand: tab_df = tab_df[tab_df['Brand'].isin(sel_brand)]
                 
-        # Format Filter
         with col2:
             if 'Format' in tab_df.columns:
                 options_format = sorted([str(x) for x in tab_df['Format'].unique() if pd.notna(x) and str(x).strip() != ''])
                 sel_format = st.multiselect("Format", options=options_format)
                 if sel_format: tab_df = tab_df[tab_df['Format'].isin(sel_format)]
                 
-        # Style Filter
         with col3:
             if 'Parent Style' in tab_df.columns:
                 options_style = sorted([str(x) for x in tab_df['Parent Style'].unique() if pd.notna(x) and str(x).strip() != ''])
                 sel_style = st.multiselect("Parent Style", options=options_style)
                 if sel_style: tab_df = tab_df[tab_df['Parent Style'].isin(sel_style)]
                 
-        # Price Filter
         with col4:
             if 'Price' in tab_df.columns:
                 valid_prices = tab_df['Price'].dropna()
@@ -253,7 +255,6 @@ with tab_data:
                         st.write(f"**Price Range:** £{min_p:,.2f}")
                         
         st.divider()
-        # Render the final clean table
         render_inventory_table(tab_df)
 
 
