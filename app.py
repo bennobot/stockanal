@@ -26,56 +26,44 @@ def load_data():
     sheet_url = "https://docs.google.com/spreadsheets/d/1t1ZnGoLpqcF7OnkVXsp6I4yF-6le3-ai4BYKukaJka4"
     df = conn.read(spreadsheet=sheet_url, worksheet="DATA")
     
-    # Clean up identifiers
+    # --- CRITICAL FIX 1: Strip invisible BOMs and hidden spaces from all headers ---
+    df.columns = [str(c).replace('\ufeff', '').strip() for c in df.columns]
+    
+    # Remove any duplicated columns (e.g., if 'Product Name' appeared twice)
+    df = df.loc[:, ~df.columns.duplicated()]
+    
+    # Clean up SKU identifier
     if 'Group by SKU' in df.columns:
         df['Group by SKU'] = df['Group by SKU'].astype(str)
     
-    # Clean up stock numbers
-    stock_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH']
+    # Ensure all depot stock columns are treated as numbers safely
+    stock_cols =[c for c in['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH'] if c in df.columns]
     for col in stock_cols:
-        if col in df.columns:
-            df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
+        df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-    # Clean Prices and RENAME column to "Price"
-    if 'Sales Price (Price Tier 1)' in df.columns:
-        df['Sales Price (Price Tier 1)'] = pd.to_numeric(
-            df['Sales Price (Price Tier 1)'].astype(str).str.replace(r'[£$,]', '', regex=True), errors='coerce'
-        )
-        df.rename(columns={'Sales Price (Price Tier 1)': 'Price'}, inplace=True)
+    # Dynamically find the Price column (e.g. Sales Price) and clean it
+    price_col = [c for c in df.columns if 'Price' in c]
+    if price_col:
+        p_name = price_col[0]
+        df[p_name] = pd.to_numeric(df[p_name].astype(str).str.replace(r'[£$,]', '', regex=True), errors='coerce')
+        df.rename(columns={p_name: 'Price'}, inplace=True)
         
-    # Clean ABV
+    # Clean ABV safely
     if 'ABV' in df.columns:
-        df['ABV'] = pd.to_numeric(
-            df['ABV'].astype(str).str.replace(r'[%]', '', regex=True), errors='coerce'
-        )
+        df['ABV'] = pd.to_numeric(df['ABV'].astype(str).str.replace(r'[%]', '', regex=True), errors='coerce')
         
     # Ignore "service" locations
     if 'Default Location' in df.columns:
         df = df[df['Default Location'].fillna('').str.lower() != 'service']
         
-    # Set the columns in the exact requested order natively
-    core_columns =[
-        'Group by SKU', 'Availability', 'Group', 'Parent Style', 'Brand', 
-        'Product Name', 'Format Type', 'Size', 'ABV', 'Price', 
-        'Format', 'Default Location', # Kept for background logic, hidden later
-        'LDN OH', 'LDN Avail', 'LDN Sold', 
-        'GLO OH', 'GLO Avail', 'GLO Sold'
-    ]
-    
-    existing_columns =[col for col in core_columns if col in df.columns]
-    
-    # Drop duplicated columns (e.g. if 'Product Name' appears twice in the raw sheet)
-    df = df.loc[:, ~df.columns.duplicated()]
-    df = df[existing_columns]
-    
     # --- CUSTOM DEFAULT SORTING ---
     if 'Format' in df.columns:
         format_order =['Cask', 'Keg', 'Cans', 'Bottles', 'Bag in Box', 'Other']
         existing_formats = df['Format'].dropna().unique().tolist()
-        final_format_order = format_order + [f for f in existing_formats if f not in format_order]
+        final_format_order = format_order +[f for f in existing_formats if f not in format_order]
         df['Format'] = pd.Categorical(df['Format'], categories=final_format_order, ordered=True)
         
-    sort_cols = [c for c in ['Brand', 'Format', 'Product Name'] if c in df.columns]
+    sort_cols = [c for c in['Brand', 'Format', 'Product Name'] if c in df.columns]
     if sort_cols:
         df = df.sort_values(by=sort_cols, ascending=[True] * len(sort_cols))
         
@@ -93,14 +81,15 @@ df = load_data()
 def apply_location_toggles(data, ldn_active, glo_active):
     df_loc = data.copy()
     
+    # Calculate totals
     df_loc['Total OH'] = (df_loc.get('LDN OH', 0) if ldn_active else 0) + (df_loc.get('GLO OH', 0) if glo_active else 0)
     df_loc['Total Avail'] = (df_loc.get('LDN Avail', 0) if ldn_active else 0) + (df_loc.get('GLO Avail', 0) if glo_active else 0)
     df_loc['Total Sold'] = (df_loc.get('LDN Sold', 0) if ldn_active else 0) + (df_loc.get('GLO Sold', 0) if glo_active else 0)
     
-    # Filter out items where the active locations have exactly 0 stock
+    # Drop rows where there is no stock for active locations
     df_loc = df_loc[df_loc['Total OH'] > 0]
     
-    # Drop columns for inactive locations
+    # Drop deactivated location columns
     cols_to_drop =[]
     if not ldn_active: cols_to_drop.extend(['LDN OH', 'LDN Avail', 'LDN Sold'])
     if not glo_active: cols_to_drop.extend(['GLO OH', 'GLO Avail', 'GLO Sold'])
@@ -112,9 +101,23 @@ def apply_location_toggles(data, ldn_active, glo_active):
 # Helper Function 2: Render Styled Data Table
 # ---------------------------------------------------------
 def render_inventory_table(data):
-    # Hide the background columns
-    cols_to_hide = ['Format', 'Default Location']
-    display_df = data.drop(columns=[c for c in cols_to_hide if c in data.columns])
+    # 1. Define the EXACT requested column order
+    target_order =[
+        'Group by SKU', 'Availability', 'Group', 'Parent Style', 'Brand', 
+        'Product Name', 'Format Type', 'Size', 'ABV', 'Price', 
+        'LDN OH', 'LDN Avail', 'LDN Sold', 
+        'GLO OH', 'GLO Avail', 'GLO Sold', 
+        'Total OH', 'Total Avail', 'Total Sold'
+    ]
+    
+    # 2. Grab columns that exactly match the target list
+    ordered_cols = [col for col in target_order if col in data.columns]
+    
+    # 3. CRITICAL FIX 2: Grab any OTHER columns that might exist so they are NEVER lost.
+    # We still hide 'Format' and 'Default Location' to keep things visually clean.
+    extra_cols = [col for col in data.columns if col not in ordered_cols and col not in['Format', 'Default Location']]
+    
+    display_df = data[ordered_cols + extra_cols]
 
     def style_depot_columns(col):
         if 'LDN' in col.name: return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) 
@@ -125,31 +128,31 @@ def render_inventory_table(data):
     format_dict = {}
     inventory_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH', 'Total OH', 'Total Avail', 'Total Sold']
     
+    # Format and center inventory columns
     active_inv_cols =[col for col in inventory_cols if col in display_df.columns]
-    
     for col in active_inv_cols: 
         format_dict[col] = "{:,.0f}"
 
     if 'Price' in display_df.columns: format_dict['Price'] = "{:,.2f}"
     if 'ABV' in display_df.columns: format_dict['ABV'] = "{:.1f}"
 
-    # Apply all visual styles: Colors, Size 12 Font, and Centered text for inventory levels
+    # Apply all visual styles: Colors, Font Size, and Centered Text
     styled_df = (display_df.style
                  .apply(style_depot_columns, axis=0)
                  .set_properties(**{'font-size': '12px'})
                  .set_properties(subset=active_inv_cols, **{'text-align': 'center'})
                  .format(format_dict, na_rep=""))
     
-    # Render table with standard behavior, but squish SKU
     st.dataframe(
         styled_df, 
-        use_container_width=True, 
+        width="stretch", # Streamlit warning fix
         hide_index=True,
         column_config={
+            # Force visual truncation so it stays out of the way
             "Group by SKU": st.column_config.TextColumn(
                 "SKU",
                 width="small",
-                max_chars=15,  # Force visual truncation
+                max_chars=15, 
                 help="Double click cell to copy full SKU"
             )
         }
@@ -186,7 +189,7 @@ with tab_dash:
             format_agg = dash_df.groupby("Format")[['Total Avail', 'Total Sold']].sum().reset_index()
             fig_format = px.bar(format_agg, x="Format", y=["Total Avail", "Total Sold"], 
                              barmode="group", labels={'value': 'Volume', 'variable': 'Metric'})
-            st.plotly_chart(fig_format, use_container_width=True)
+            st.plotly_chart(fig_format, width="stretch") # Streamlit warning fix
             
     with chart_col2:
         st.write("**Available Stock: Style within Formats**")
@@ -196,7 +199,7 @@ with tab_dash:
                 sun_df['Format'] = sun_df['Format'].fillna('Unknown Format').replace('', 'Unknown Format')
                 sun_df['Parent Style'] = sun_df['Parent Style'].fillna('Unknown Style').replace('', 'Unknown Style')
                 fig_sun = px.sunburst(sun_df, path=['Format', 'Parent Style'], values='Total Avail')
-                st.plotly_chart(fig_sun, use_container_width=True)
+                st.plotly_chart(fig_sun, width="stretch") # Streamlit warning fix
             else:
                 st.info("No available stock to display for selected locations.")
 
