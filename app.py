@@ -9,7 +9,7 @@ st.set_page_config(page_title="Inventory Dashboard", layout="wide")
 # Inject custom CSS to reduce the global font size and make the app tighter
 st.markdown("""
     <style>
-        html, body, [class*="css"] {
+        html, body,[class*="css"] {
             font-size: 14px; 
         }
     </style>
@@ -26,6 +26,12 @@ def load_data():
     sheet_url = "https://docs.google.com/spreadsheets/d/1t1ZnGoLpqcF7OnkVXsp6I4yF-6le3-ai4BYKukaJka4"
     df = conn.read(spreadsheet=sheet_url, worksheet="DATA")
     
+    # --- CRITICAL FIX: Strip hidden spaces/newlines from all column headers ---
+    df.rename(columns=lambda x: str(x).strip(), inplace=True)
+    
+    # Keep only the first instance of duplicated columns (like duplicate 'Product Name' headers)
+    df = df.loc[:, ~df.columns.duplicated()]
+    
     # Clean up identifiers
     if 'Group by SKU' in df.columns:
         df['Group by SKU'] = df['Group by SKU'].astype(str)
@@ -36,12 +42,14 @@ def load_data():
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-    # Clean Prices and RENAME column to "Price"
-    if 'Sales Price (Price Tier 1)' in df.columns:
-        df['Sales Price (Price Tier 1)'] = pd.to_numeric(
-            df['Sales Price (Price Tier 1)'].astype(str).str.replace(r'[£$,]', '', regex=True), errors='coerce'
+    # CRITICAL FIX: Smart lookup for the Price column to survive name changes
+    price_col =[c for c in df.columns if 'Price' in c]
+    if price_col:
+        p_name = price_col[0]
+        df[p_name] = pd.to_numeric(
+            df[p_name].astype(str).str.replace(r'[£$,]', '', regex=True), errors='coerce'
         )
-        df.rename(columns={'Sales Price (Price Tier 1)': 'Price'}, inplace=True)
+        df.rename(columns={p_name: 'Price'}, inplace=True)
         
     # Clean ABV
     if 'ABV' in df.columns:
@@ -55,24 +63,23 @@ def load_data():
         
     # Select our specific required columns
     core_columns =[
-        'Group by SKU', 'Brand', 'Product Name', 'Group', 'Parent Style', 
-        'Format Type', 'Format', 'Size', 'ABV', 'Price', 
-        'Availability', 'Default Location',
+        'Group by SKU', 'Availability', 'Group', 'Parent Style', 'Brand', 
+        'Product Name', 'Format Type', 'Format', 'Size', 'ABV', 'Price', 
+        'Default Location',
         'LDN OH', 'LDN Avail', 'LDN Sold', 
         'GLO OH', 'GLO Avail', 'GLO Sold'
     ]
     existing_columns =[col for col in core_columns if col in df.columns]
-    df = df.loc[:, ~df.columns.duplicated()]
     df = df[existing_columns]
     
     # --- CUSTOM DEFAULT SORTING ---
     if 'Format' in df.columns:
         format_order =['Cask', 'Keg', 'Cans', 'Bottles', 'Bag in Box', 'Other']
         existing_formats = df['Format'].dropna().unique().tolist()
-        final_format_order = format_order +[f for f in existing_formats if f not in format_order]
+        final_format_order = format_order + [f for f in existing_formats if f not in format_order]
         df['Format'] = pd.Categorical(df['Format'], categories=final_format_order, ordered=True)
         
-    sort_cols =[c for c in ['Brand', 'Format', 'Product Name'] if c in df.columns]
+    sort_cols = [c for c in ['Brand', 'Format', 'Product Name'] if c in df.columns]
     if sort_cols:
         df = df.sort_values(by=sort_cols, ascending=[True] * len(sort_cols))
         
@@ -116,9 +123,8 @@ def render_inventory_table(data):
         'Total OH', 'Total Avail', 'Total Sold'
     ]
     
-    # Filter the data to ONLY show these columns (in this exact order), 
-    # automatically hiding any columns that were toggled off (like LDN or GLO)
-    ordered_cols = [col for col in target_order if col in data.columns]
+    # Filter the data to ONLY show these columns (in this exact order)
+    ordered_cols =[col for col in target_order if col in data.columns]
     display_df = data[ordered_cols]
 
     def style_depot_columns(col):
@@ -130,8 +136,8 @@ def render_inventory_table(data):
     format_dict = {}
     inventory_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH', 'Total OH', 'Total Avail', 'Total Sold']
     
-    # Identify which inventory columns are currently active to format and center them
-    active_inv_cols = [col for col in inventory_cols if col in display_df.columns]
+    # Identify which inventory columns are active to format and center them
+    active_inv_cols =[col for col in inventory_cols if col in display_df.columns]
     
     for col in active_inv_cols: 
         format_dict[col] = "{:,.0f}"
@@ -139,7 +145,7 @@ def render_inventory_table(data):
     if 'Price' in display_df.columns: format_dict['Price'] = "{:,.2f}"
     if 'ABV' in display_df.columns: format_dict['ABV'] = "{:.1f}"
 
-    # Apply all visual styles: Colors, Size 12 Font, and Centered text for inventory levels
+    # Apply all visual styles: Colors, Font Size, and Centered Text
     styled_df = (display_df.style
                  .apply(style_depot_columns, axis=0)
                  .set_properties(**{'font-size': '12px'})
@@ -151,9 +157,10 @@ def render_inventory_table(data):
         use_container_width=True, 
         hide_index=True,
         column_config={
+            # Using width="small" will compress this column so it stays out of the way!
             "Group by SKU": st.column_config.TextColumn(
                 "SKU",
-                width=45,  # Numeric pixel limit forces the column to be incredibly narrow!
+                width="small",
                 help="Double click cell to copy full SKU"
             )
         }
