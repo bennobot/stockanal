@@ -15,53 +15,36 @@ conn = st.connection("gsheets", type=GSheetsConnection)
 @st.cache_data(ttl=600)
 def load_data():
     sheet_url = "https://docs.google.com/spreadsheets/d/1t1ZnGoLpqcF7OnkVXsp6I4yF-6le3-ai4BYKukaJka4"
-    
-    # Load all data from the "DATA" tab
     df = conn.read(spreadsheet=sheet_url, worksheet="DATA")
     
-    # Clean up the new SKU identifier
     if 'Group by SKU' in df.columns:
         df['Group by SKU'] = df['Group by SKU'].astype(str)
     
-    # Ensure all depot stock columns are treated as numbers
-    stock_cols =[
-        'LDN Sold', 'LDN Avail', 'LDN OH', 
-        'GLO Sold', 'GLO Avail', 'GLO OH'
-    ]
+    stock_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH']
     for col in stock_cols:
         if col in df.columns:
             df[col] = pd.to_numeric(df[col], errors='coerce').fillna(0)
             
-    # Clean up the Price column (removes any currency symbols/commas and forces it to a number)
     if 'Sales Price (Price Tier 1)' in df.columns:
         df['Sales Price (Price Tier 1)'] = pd.to_numeric(
-            df['Sales Price (Price Tier 1)'].astype(str).str.replace(r'[£$,]', '', regex=True), 
-            errors='coerce'
+            df['Sales Price (Price Tier 1)'].astype(str).str.replace(r'[£$,]', '', regex=True), errors='coerce'
         )
         
-    # Clean up the ABV column (removes any % symbols and forces it to a number)
     if 'ABV' in df.columns:
         df['ABV'] = pd.to_numeric(
-            df['ABV'].astype(str).str.replace(r'[%]', '', regex=True), 
-            errors='coerce'
+            df['ABV'].astype(str).str.replace(r'[%]', '', regex=True), errors='coerce'
         )
             
-    # Calculate Totals across both depots for easy filtering and charting
     df['Total OH'] = df.get('LDN OH', 0) + df.get('GLO OH', 0)
     df['Total Avail'] = df.get('LDN Avail', 0) + df.get('GLO Avail', 0)
     df['Total Sold'] = df.get('LDN Sold', 0) + df.get('GLO Sold', 0)
 
-    # --- APPLY CORE FILTERS ---
-    
-    # 1. Only keep rows where total On Hand > 0
     if 'Total OH' in df.columns:
         df = df[df['Total OH'] > 0]
         
-    # 2. Ignore the "service" location (case-insensitive)
     if 'Default Location' in df.columns:
         df = df[df['Default Location'].fillna('').str.lower() != 'service']
         
-    # --- SELECT REQUESTED COLUMNS ---
     core_columns =[
         'Group by SKU', 'Brand', 'Product Name', 'Group', 'Parent Style', 
         'Format Type', 'Format', 'Size', 'ABV', 'Sales Price (Price Tier 1)', 
@@ -71,129 +54,144 @@ def load_data():
         'Total OH', 'Total Avail', 'Total Sold'
     ]
     
-    # Trick to avoid crashes if a column name is slightly off
     existing_columns =[col for col in core_columns if col in df.columns]
-    
-    # Remove any duplicate columns that pandas might have renamed
     df = df.loc[:, ~df.columns.duplicated()]
-    
     df = df[existing_columns]
             
     return df
 
-# Load the data
 df = load_data()
 
-# 3. Create a Sidebar for Granular Drill-Downs
-st.sidebar.header("Filter Data")
+# ---------------------------------------------------------
+# Helper Function: Render Styled Data Table
+# ---------------------------------------------------------
+def render_inventory_table(data):
+    def style_depot_columns(col):
+        if 'LDN' in col.name:
+            return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) 
+        elif 'GLO' in col.name:
+            return['background-color: rgba(0, 200, 100, 0.15)'] * len(col) 
+        elif 'Total' in col.name:
+            return['background-color: rgba(255, 165, 0, 0.15)'] * len(col) 
+        else:
+            return [''] * len(col)
 
-# Helper function to create clean filters automatically
-def create_filter(col_name):
-    if col_name in df.columns:
-        # Get unique values, drop blanks, sort alphabetically
-        options = sorted([str(x) for x in df[col_name].unique() if pd.notna(x) and str(x).strip() != ''])
-        return st.sidebar.multiselect(f"Filter by {col_name}", options=options)
-    return[]
+    format_dict = {}
+    inventory_cols =['LDN Sold', 'LDN Avail', 'LDN OH', 'GLO Sold', 'GLO Avail', 'GLO OH', 'Total OH', 'Total Avail', 'Total Sold']
+    for col in inventory_cols:
+        if col in data.columns:
+            format_dict[col] = "{:,.0f}"
 
-selected_brand = create_filter("Brand")
-selected_group = create_filter("Group")
-selected_format = create_filter("Format Type")
-selected_location = create_filter("Default Location")
+    if 'Sales Price (Price Tier 1)' in data.columns:
+        format_dict['Sales Price (Price Tier 1)'] = "{:,.2f}"
+    if 'ABV' in data.columns:
+        format_dict['ABV'] = "{:.1f}"
 
-# Apply filters
-filtered_df = df.copy()
-if selected_brand:
-    filtered_df = filtered_df[filtered_df["Brand"].isin(selected_brand)]
-if selected_group:
-    filtered_df = filtered_df[filtered_df["Group"].isin(selected_group)]
-if selected_format:
-    filtered_df = filtered_df[filtered_df["Format Type"].isin(selected_format)]
-if selected_location:
-    filtered_df = filtered_df[filtered_df["Default Location"].isin(selected_location)]
+    styled_df = data.style.apply(style_depot_columns, axis=0).format(format_dict, na_rep="")
+    
+    # st.dataframe natively supports clicking headers to sort, and a search icon inside the UI
+    st.dataframe(styled_df, use_container_width=True, hide_index=True)
 
-# 4. Top Level KPIs
-st.subheader("Key Metrics (Combined Depots)")
-col1, col2, col3 = st.columns(3)
 
-on_hand_sum = filtered_df['Total OH'].sum() if 'Total OH' in filtered_df.columns else 0
-available_sum = filtered_df['Total Avail'].sum() if 'Total Avail' in filtered_df.columns else 0
-sold_sum = filtered_df['Total Sold'].sum() if 'Total Sold' in filtered_df.columns else 0
+# ---------------------------------------------------------
+# UI Layout: Tabs
+# ---------------------------------------------------------
+tab_dash, tab_supplier, tab_format, tab_style = st.tabs([
+    "📊 Dashboard", 
+    "🏭 Brand / Supplier", 
+    "📦 Format", 
+    "🍺 Parent Style"
+])
 
-col1.metric("Total Stock On Hand", f"{on_hand_sum:,.0f}")
-col2.metric("Total Available", f"{available_sum:,.0f}")
-col3.metric("Total Sold", f"{sold_sum:,.0f}")
+# --- TAB 1: DASHBOARD ---
+with tab_dash:
+    st.subheader("High-Level Inventory Overview")
+    
+    # Location Toggles
+    st.write("**Toggle Depots for Dashboard Metrics:**")
+    col_t1, col_t2 = st.columns(2)
+    with col_t1:
+        ldn_active = st.checkbox("Include LDN (London)", value=True)
+    with col_t2:
+        glo_active = st.checkbox("Include GLO (Gloucester)", value=True)
+        
+    # Dynamically calculate Dashboard Totals based on toggles
+    dash_df = df.copy()
+    dash_df['Dash OH'] = (dash_df.get('LDN OH', 0) if ldn_active else 0) + (dash_df.get('GLO OH', 0) if glo_active else 0)
+    dash_df['Dash Avail'] = (dash_df.get('LDN Avail', 0) if ldn_active else 0) + (dash_df.get('GLO Avail', 0) if glo_active else 0)
+    dash_df['Dash Sold'] = (dash_df.get('LDN Sold', 0) if ldn_active else 0) + (dash_df.get('GLO Sold', 0) if glo_active else 0)
+    
+    # Filter out empty rows based on current toggles
+    dash_df = dash_df[dash_df['Dash OH'] > 0]
+    
+    col1, col2, col3 = st.columns(3)
+    col1.metric("Selected Stock On Hand", f"{dash_df['Dash OH'].sum():,.0f}")
+    col2.metric("Selected Available", f"{dash_df['Dash Avail'].sum():,.0f}")
+    col3.metric("Selected Sold", f"{dash_df['Dash Sold'].sum():,.0f}")
+    
+    st.divider()
+    
+    chart_col1, chart_col2 = st.columns(2)
+    
+    with chart_col1:
+        st.write("**Available vs Sold by Format**")
+        if 'Format' in dash_df.columns and not dash_df.empty:
+            format_agg = dash_df.groupby("Format")[['Dash Avail', 'Dash Sold']].sum().reset_index()
+            fig_format = px.bar(format_agg, x="Format", y=["Dash Avail", "Dash Sold"], 
+                             barmode="group", labels={'value': 'Volume', 'variable': 'Metric'})
+            st.plotly_chart(fig_format, use_container_width=True)
+            
+    with chart_col2:
+        st.write("**Available Stock: Style within Formats**")
+        if 'Format' in dash_df.columns and 'Parent Style' in dash_df.columns and not dash_df.empty:
+            # Sunburst chart is perfect for hierarchical data (Format -> Style)
+            sun_df = dash_df[dash_df['Dash Avail'] > 0] # Only plot things we actually have
+            if not sun_df.empty:
+                fig_sun = px.sunburst(sun_df, path=['Format', 'Parent Style'], values='Dash Avail')
+                st.plotly_chart(fig_sun, use_container_width=True)
+            else:
+                st.info("No available stock to display for selected locations.")
+
+
+# --- TAB 2: BRAND / SUPPLIER ---
+with tab_supplier:
+    st.subheader("Inventory by Brand / Supplier")
+    if 'Brand' in df.columns:
+        brand_options = sorted([str(x) for x in df['Brand'].unique() if pd.notna(x) and str(x).strip() != ''])
+        sel_brands = st.multiselect("Filter by Brand(s)", options=brand_options, key="brand_filter")
+        
+        filtered_brand_df = df[df['Brand'].isin(sel_brands)] if sel_brands else df
+        render_inventory_table(filtered_brand_df)
+    else:
+        st.error("Brand column not found in data.")
+
+
+# --- TAB 3: FORMAT ---
+with tab_format:
+    st.subheader("Inventory by Format")
+    if 'Format' in df.columns:
+        format_options = sorted([str(x) for x in df['Format'].unique() if pd.notna(x) and str(x).strip() != ''])
+        sel_formats = st.multiselect("Filter by Format(s)", options=format_options, key="format_filter")
+        
+        filtered_format_df = df[df['Format'].isin(sel_formats)] if sel_formats else df
+        render_inventory_table(filtered_format_df)
+    else:
+        st.error("Format column not found in data.")
+
+
+# --- TAB 4: PARENT STYLE ---
+with tab_style:
+    st.subheader("Inventory by Parent Style")
+    if 'Parent Style' in df.columns:
+        style_options = sorted([str(x) for x in df['Parent Style'].unique() if pd.notna(x) and str(x).strip() != ''])
+        sel_styles = st.multiselect("Filter by Parent Style(s)", options=style_options, key="style_filter")
+        
+        filtered_style_df = df[df['Parent Style'].isin(sel_styles)] if sel_styles else df
+        render_inventory_table(filtered_style_df)
+    else:
+        st.error("Parent Style column not found in data.")
 
 st.divider()
-
-# 5. Visualizations
-col_chart1, col_chart2 = st.columns(2)
-
-with col_chart1:
-    st.subheader("Stock Status by Brand")
-    if 'Brand' in filtered_df.columns and not filtered_df.empty:
-        brand_df = filtered_df.groupby("Brand")[['Total Avail', 'Total Sold']].sum().reset_index()
-        fig_brand = px.bar(brand_df, x="Brand", y=["Total Avail", "Total Sold"], 
-                         title="Total Available vs Sold per Brand", barmode="stack")
-        st.plotly_chart(fig_brand, use_container_width=True)
-
-with col_chart2:
-    st.subheader("Top 10 Sold SKUs")
-    if 'Group by SKU' in filtered_df.columns and 'Total Sold' in filtered_df.columns and not filtered_df.empty:
-        top_sold = filtered_df.sort_values(by="Total Sold", ascending=False).head(10)
-        
-        hover_data = ["Product Name"] if "Product Name" in filtered_df.columns else None
-        
-        fig_sku = px.bar(top_sold, x="Group by SKU", y="Total Sold", hover_data=hover_data,
-                         title="Highest Sold Products (Combined)", text_auto=True)
-        st.plotly_chart(fig_sku, use_container_width=True)
-
-# 6. Granular Data Table with Color & Number Formatting
-st.subheader("Granular Inventory Data")
-st.write("Use the table below to sort and search through specific items.")
-
-# Define the color mapping function
-def style_depot_columns(col):
-    if 'LDN' in col.name:
-        return['background-color: rgba(0, 150, 255, 0.15)'] * len(col) 
-    elif 'GLO' in col.name:
-        return['background-color: rgba(0, 200, 100, 0.15)'] * len(col) 
-    elif 'Total' in col.name:
-        return['background-color: rgba(255, 165, 0, 0.15)'] * len(col) 
-    else:
-        return [''] * len(col)
-
-# Set up specific number formatting rules
-format_dict = {}
-
-# Make inventory columns integers (with thousands separators)
-inventory_cols =[
-    'LDN Sold', 'LDN Avail', 'LDN OH', 
-    'GLO Sold', 'GLO Avail', 'GLO OH', 
-    'Total OH', 'Total Avail', 'Total Sold'
-]
-for col in inventory_cols:
-    if col in filtered_df.columns:
-        format_dict[col] = "{:,.0f}"
-
-# Make the Price column 2 decimal places
-if 'Sales Price (Price Tier 1)' in filtered_df.columns:
-    format_dict['Sales Price (Price Tier 1)'] = "{:,.2f}"
-    
-# Make the ABV column 1 decimal place
-if 'ABV' in filtered_df.columns:
-    format_dict['ABV'] = "{:.1f}"
-
-# Apply the styling AND the formatting to the dataframe
-styled_df = filtered_df.style.apply(style_depot_columns, axis=0).format(format_dict, na_rep="")
-
-# Display the styled dataframe
-st.dataframe(
-    styled_df, 
-    use_container_width=True,
-    hide_index=True
-)
-
-# Optional: Add a button to manually clear the cache and pull fresh Google Sheets data
-if st.button("Refresh Data"):
+if st.button("Refresh Data from Google Sheets"):
     st.cache_data.clear()
     st.rerun()
